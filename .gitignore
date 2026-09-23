@@ -1,0 +1,11 @@
+# Vivado 工程生成目录（由 build.bat / create_project.tcl 重建，不上传）
+prj/
+
+# Vivado 运行临时文件
+.Xil/
+*.log
+*.jou
+vivado.jou
+vivado.log
+hs_err_*
+webtalk.*

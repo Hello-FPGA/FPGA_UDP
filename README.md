@@ -4,8 +4,9 @@
 
 本项目为 HELLO-FPGA KU5P 开发板上的 **UDP 以太网回环** 示例，基于 Xilinx Kintex UltraScale+ KU5P FPGA。项目实现了完整的硬件级 UDP/IP/Ethernet 协议栈，收到 UDP 数据包后自动将载荷原路回发（Loopback），用于验证不同速率以太网接口的功能。
 
-四个子工程共享相同的核心协议栈逻辑（`fpga_core.v` 及 `rtl/`、`lib/` 下的公共模块），**核心差异在于以太网 IP 核选型、接口速率、数据位宽及时钟方案**。
+仓库当前包含 **三个子工程**（10G / 25G / 40G），它们共享相同的核心协议栈逻辑（`fpga_core.v` 及 `rtl/`、`lib/` 下的公共模块），**核心差异在于以太网 IP 核选型、接口速率、数据位宽及时钟方案**。
 
+> 注：100G（`cmac_usplus` / CAUI4 + RS-FEC / 512-bit）方案作为后续规划，当前仓库未包含对应工程与测试报告。
 
 项目用到的主要硬件：
 
@@ -13,15 +14,31 @@
 
 2、https://img-grab.com/productinfo/259279.html Hello-FPGA-FMC-QSFP-X2 FMC子卡
 
-3、光纤线缆与网卡，具体型号在doc/test_report中有详细描述
+3、光纤线缆与网卡，具体型号在 `doc/test_report_*.docx` 中有详细描述
 
-
+> **本仓库仅上传重建工程所需的脚本与源码，不上传 Vivado 工程文件与生成产物。** 完整的硬件手册与上板实测报告见 [`doc/`](#2-文档与参考资料doc) 目录，工程的一键恢复方式见 [第 9 节](#9-工程恢复与构建)。
 
 ---
 
-## 2. 基本概念
+## 2. 文档与参考资料（doc/）
 
-### 2.1 网络协议相关
+`doc/` 目录收录了硬件手册与实测报告，是理解本工程硬件平台、引脚约束与验证结论的第一手资料，**强烈建议在搭建/调试前先阅读**：
+
+| 文件 | 类型 | 内容说明 |
+|---|---|---|
+| `HELLO-FPGA_KU5P-2-0.pdf` | 开发板手册 | Hello-FPGA KU5P（Xilinx Kintex UltraScale+ XCKU5P）开发板 V2.0 原理图 / 引脚定义 / 时钟与 GT 连接关系，是确定 FPGA 型号、引脚约束、参考时钟来源的依据 |
+| `Hello-FPGA-FMC-QSFP-X2+User+Manual.pdf` | 子卡手册 | FMC-QSFP-X2 子卡用户手册，说明 QSFP+ 连接器与 FMC 引脚映射，40G 工程的 GT 差分对约束即来源于此 |
+| `test_report_10g.docx` | 实测报告 | 10G（SFP+）UDP 回环链路的上板测试记录：连接拓扑、光模块 / 网线型号、吞吐与丢包等实测结果 |
+| `test_report_25g.docx` | 实测报告 | 25G（SFP28）UDP 回环链路的上板实测报告 |
+| `test_report_40g.docx` | 实测报告 | 40G（QSFP+，需 FMC-QSFP-X2 子卡）UDP 回环链路的上板实测报告 |
+
+> 三份测试报告分别对应仓库中现有的 10G / 25G / 40G 三个工程；报告中对光纤线缆与网卡型号有详细描述，配置物理链路时请以对应速率的 `test_report_*.docx` 为准。
+
+---
+
+## 3. 基本概念
+
+### 3.1 网络协议相关
 
 #### UDP（User Datagram Protocol，用户数据报协议）
 UDP 是一种**无连接、不可靠但低延迟**的传输层协议（RFC 768）。与 TCP 不同，UDP 不建立连接、不保证送达、不进行拥塞控制，因此开销极小、时延极低，非常适合 FPGA 硬件实现和高频交易、实时数据采集等场景。
@@ -86,7 +103,7 @@ MAC 头部 + IP + 数据 + FCS ← 数据链路层（MAC 地址、帧校验）
 
 ---
 
-### 2.2 FPGA 与硬件相关
+### 3.2 FPGA 与硬件相关
 
 #### GT（Gigabit Transceiver，千兆级收发器）
 GT 是 FPGA 内部的高速串行收发器硬核，每个 GT 通道包含独立的 TX/RX 模块，支持多种串行协议（如 Ethernet、PCIe、SATA 等）。关键参数：
@@ -124,7 +141,7 @@ AXI-Stream 是 ARM AMBA 总线协议族中的流式数据传输协议，广泛�
 - **BASE-KR**：BASE-R 的背板/铜缆版本，同样使用 64B/66B 编码，但电气特性不同，适用于 PCB 走线或铜缆连接
 
 #### RS-FEC（Reed-Solomon Forward Error Correction，里德-所罗门前向纠错）
-RS-FEC 是一种强大的前向纠错编码技术，100G 以太网中广泛使用。它在发送端添加冗余校验数据，接收端利用这些冗余信息自动纠正传输中产生的误码，从而在不增加发射功率的情况下显著降低误码率（BER）。100G CMAC 中启用了 RS-FEC。
+RS-FEC 是一种强大的前向纠错编码技术，100G 以太网中广泛使用。它在发送端添加冗余校验数据，接收端利用这些冗余信息自动纠正传输中产生的误码，从而在不增加发射功率的情况下显著降低误码率（BER）。（当前仓库的 10G/25G/40G 工程未使用 RS-FEC，仅作为 100G 规划方案的相关概念保留。）
 
 #### SFP+ / QSFP+ / QSFP28
 常见的光模块封装形式：
@@ -141,40 +158,41 @@ MAC 是以太网数据链路层的核心子层，负责：
 - 介质访问控制（决定何时可以发送数据）
 - 帧的发送与接收
 
-本项目中的 "MAC IP" 指 Xilinx 提供的以太网 MAC 硬核 IP（如 XXV Ethernet、CMAC），它们实现了物理层编码和 MAC 层功能，对外暴露 AXI-Stream 用户接口。
+本项目中的 "MAC IP" 指 Xilinx 提供的以太网 MAC 硬核 IP（如 XXV Ethernet、40G Ethernet），它们实现了物理层编码和 MAC 层功能，对外暴露 AXI-Stream 用户接口。
 
 #### FCS（Frame Check Sequence，帧校验序列）
 FCS 是以太网帧尾部的 4 字节 CRC-32 校验值，用于检测帧在传输过程中是否发生误码。发送端由 MAC IP 自动计算并插入，接收端自动校验。本项目中各 MAC IP 均配置为自动处理 FCS（发送插入、接收校验并剥离）。
 
 ---
 
-## 3. 四个工程总览
+## 4. 三个工程总览
 
-| 参数 | xxvethernet_10g | xxvethernet_25g | ethernet_40g | ethernet_100g |
-|---|---|---|---|---|
-| **以太网速率** | 10 Gbps | 25 Gbps | 40 Gbps | 100 Gbps |
-| **Vivado IP 核** | xxv_ethernet | xxv_ethernet | l_ethernet | cmac_usplus |
-| **编码方式** | BASE-R | BASE-R | BASE-KR | CAUI4 + RS-FEC |
-| **GT 通道数** | 1 | 1 | 4 | 4 |
-| **GT 参考时钟** | 156.25 MHz | 156.25 MHz | — (内部 PLL) | 156.25 MHz |
-| **MAC AXIS 数据位宽** | 64-bit | 64-bit | 256-bit | 512-bit |
-| **MAC AXIS KEEP 位宽** | 8-bit | 8-bit | 32-bit | 64-bit |
-| **逻辑时钟 (logic_clk)** | 156.25 MHz (MAC 恢复时钟) | 390.625 MHz (MMCM) | 390.625 MHz (MMCM) | 390.625 MHz (MMCM) |
-| **MMCM 输出2 (clk_out2)** | 156.25 MHz | 390.625 MHz | 390.625 MHz | 390.625 MHz |
-| **物理连接器** | SFP+ | SFP+ | QSFP+ | QSFP+ |
-| **需要位宽转换** | 否 | 否 | 是 (256↔64) | 是 (512↔64) |
-| **ethernet_adapter 模块** | 无 | 无 | 有 | 有 |
+| 参数 | xxvethernet_10g | xxvethernet_25g | ethernet_40g |
+|---|---|---|---|
+| **以太网速率** | 10 Gbps | 25 Gbps | 40 Gbps |
+| **Vivado IP 核** | xxv_ethernet | xxv_ethernet | l_ethernet |
+| **编码方式** | BASE-R | BASE-R | BASE-KR |
+| **GT 通道数** | 1 | 1 | 4 |
+| **GT 参考时钟** | 156.25 MHz | 156.25 MHz | — (内部 PLL) |
+| **MAC AXIS 数据位宽** | 64-bit | 64-bit | 256-bit |
+| **MAC AXIS KEEP 位宽** | 8-bit | 8-bit | 32-bit |
+| **逻辑时钟 (logic_clk)** | 156.25 MHz (MAC 恢复时钟) | 390.625 MHz (MMCM) | 390.625 MHz (MMCM) |
+| **MMCM 输出2 (clk_out2)** | 156.25 MHz | 390.625 MHz | 390.625 MHz |
+| **物理连接器** | SFP+ | SFP+ | QSFP+ |
+| **需要位宽转换** | 否 | 否 | 是 (256↔64) |
+| **ethernet_adapter 模块** | 无 | 无 | 有 |
+| **实测报告** | `doc/test_report_10g.docx` | `doc/test_report_25g.docx` | `doc/test_report_40g.docx` |
 
 ---
 
-## 4. 各 RTL 模块说明
+## 5. 各 RTL 模块说明
 
-### 4.1 公共模块（四个工程共用）
+### 5.1 公共模块（三个工程共用）
 
 #### `fpga.v` — FPGA 顶层模块
 - 实例化时钟管理模块 `clk_wiz_0`，将板载 200MHz LVDS 晶振分频为系统所需的各种时钟
 - 实例化同步复位模块 `sync_reset`，确保复位信号与系统时钟同步
-- 实例化以太网 IP 封装模块（`xxv_ethernet` / `ethernet_40g_wrapper` / `cmac_usplus_wrapper`）
+- 实例化以太网 IP 封装模块（`xxv_ethernet` / `ethernet_40g_wrapper`）
 - 实例化核心逻辑模块 `fpga_core`
 - 连接 FPGA 引脚（GT 收发器差分对、参考时钟等）
 
@@ -197,7 +215,7 @@ FCS 是以太网帧尾部的 4 字节 CRC-32 校验值，用于检测帧在传�
 - 实现跨时钟域的 AXI-Stream 数据传输与位宽适配
 
 #### `rtl/` 目录 — 公共协议栈库
-来自 [alexforencich/verilog-ethernet](https://github.com/alexforenclick/verilog-ethernet) 开源项目，主要模块包括：
+来自 [alexforencich/verilog-ethernet](https://github.com/alexforencich/verilog-ethernet) 开源项目，主要模块包括：
 
 | 模块 | 功能 |
 |---|---|
@@ -215,7 +233,7 @@ FCS 是以太网帧尾部的 4 字节 CRC-32 校验值，用于检测帧在传�
 
 ---
 
-### 4.2 xxvethernet_10g 专有模块
+### 5.2 xxvethernet_10g 专有模块
 
 #### `xxv_ethernet.v` — XXV Ethernet IP 封装（10G）
 - 实例化 Vivado IP `xxv_ethernet_0`（XXV Ethernet v4.1）
@@ -236,7 +254,7 @@ FCS 是以太网帧尾部的 4 字节 CRC-32 校验值，用于检测帧在传�
 
 ---
 
-### 4.3 xxvethernet_25g 专有模块
+### 5.3 xxvethernet_25g 专有模块
 
 #### `xxv_ethernet.v` — XXV Ethernet IP 封装（25G）
 - 与 10G 工程使用相同的封装模块结构
@@ -256,7 +274,7 @@ FCS 是以太网帧尾部的 4 字节 CRC-32 校验值，用于检测帧在传�
 
 ---
 
-### 4.4 ethernet_40g 专有模块
+### 5.4 ethernet_40g 专有模块
 
 #### `ethernet_40g_wrapper.v` — 40G Ethernet IP 封装
 - 实例化 Vivado IP `l_ethernet_0`（40G Ethernet v3.3）
@@ -283,56 +301,21 @@ FCS 是以太网帧尾部的 4 字节 CRC-32 校验值，用于检测帧在传�
 
 ---
 
-### 4.5 ethernet_100g 专有模块
+## 6. 工程差异详解
 
-#### `cmac_usplus_wrapper.v` — 100G CMAC IP 封装
-- 实例化 Vivado IP `cmac_usplus_0`（CMAC v3.1）
-- 配置参数：**100 Gbps**，CAUI4 模式（4 通道），含 **RS-FEC**（前向纠错）
-- AXI-Stream **512-bit** TX/RX 用户接口（KEEP 宽度 64-bit）
-- 4 对 GT 差分引脚
-- 启用了 RS-FEC 的发送和接收（`ctl_tx_rsfec_enable` / `ctl_rx_rsfec_enable` / `ctl_rx_rsfec_enable_correction` / `ctl_rx_rsfec_enable_indication` 全部置 1）
-- 实例化 `ila_600`（ILA 逻辑分析仪）用于在线调试 MAC 层状态信号
+### 6.1 以太网 IP 核差异
 
-#### `ethernet_adapter.v` — 位宽转换适配器（512-bit ↔ 64-bit）
-- 结构与 40G 工程的 adapter 相同，但数据位宽不同：
-  - **RX 方向**：`axis_fifo_adapter`（512-bit → 64-bit）
-  - **TX 方向**：`axis_frame_length_adjust` + `axis_fifo_adapter`（64-bit → 512-bit）
-- FIFO 深度 8192
+| 特性 | xxv_ethernet (10G/25G) | l_ethernet (40G) |
+|---|---|---|
+| IP 类型 | XXV Ethernet | 40G Ethernet |
+| 适用速率 | 1~25 Gbps | 40 Gbps |
+| GT 通道数 | 1 | 4 |
+| 编码 | 64B/66B BASE-R | 64B/66B BASE-KR |
+| 用户接口位宽 | 64-bit | 256-bit |
+| FCS 处理 | IP 内部处理 | IP 内部处理 |
+| RS-FEC | 不支持 | 不支持 |
 
-#### `IP/cmac_usplus_0.tcl` — IP 配置脚本
-- IP 名称：`cmac_usplus`（100G Ethernet MAC）
-- `CMAC_CAUI4_MODE` = 1（CAUI-4 模式）
-- `GT_REF_CLK_FREQ` = 156.25 MHz
-- `INCLUDE_RS_FEC` = 1（启用 RS-FEC）
-- `USER_INTERFACE` = AXIS
-- `TX_FRAME_CRC_CHECKING` = Enable FCS Insertion
-
-#### `IP/ila_1024.tcl` / `IP/ila_axis.tcl` — ILA 调试核配置
-- 100G 工程额外集成了 ILA（Integrated Logic Analyzer）用于调试 MAC 状态和 AXIS 数据流
-
-#### 时钟方案
-- `clk_wiz_0`：200MHz → 100MHz（DCLK/DRP 时钟）+ 390.625MHz（逻辑时钟）
-- `clk_axis` 来自 CMAC 的 `gt_txusrclk2`（~322.266 MHz），作为 MAC 侧时钟
-- `fpga_core` 使用 MMCM 输出的 `clk_312mhz_int`（实际 390.625MHz）
-- QSFP 模块控制：`qsfp_lpmode=0`（低功耗模式关闭），`qsfp_resetn=1`（复位释放）
-
----
-
-## 5. 工程差异详解
-
-### 5.1 以太网 IP 核差异
-
-| 特性 | xxv_ethernet (10G/25G) | l_ethernet (40G) | cmac_usplus (100G) |
-|---|---|---|---|
-| IP 类型 | XXV Ethernet | 40G Ethernet | 100G CMAC |
-| 适用速率 | 1~25 Gbps | 40 Gbps | 100 Gbps |
-| GT 通道数 | 1 | 4 | 4 (CAUI4) |
-| 编码 | 64B/66B BASE-R | 64B/66B BASE-KR | 64B/66B + RS-FEC |
-| 用户接口位宽 | 64-bit | 256-bit | 512-bit |
-| FCS 处理 | IP 内部处理 | IP 内部处理 | IP 内部处理 |
-| RS-FEC | 不支持 | 不支持 | 支持（已启用） |
-
-### 5.2 数据通路差异
+### 6.2 数据通路差异
 
 **10G / 25G（无位宽转换）：**
 ```
@@ -348,37 +331,28 @@ l_ethernet (256-bit AXIS) ←→ ethernet_adapter ←→ fpga_core (64-bit 协�
                               └─ TX: frame_length_adjust + axis_fifo_adapter (64→256)
 ```
 
-**100G（512-bit → 64-bit 转换）：**
-```
-cmac_usplus (512-bit AXIS) ←→ ethernet_adapter ←→ fpga_core (64-bit 协议栈)
-                               ├─ RX: axis_fifo_adapter (512→64)
-                               └─ TX: frame_length_adjust + axis_fifo_adapter (64→512)
-```
-
-### 5.3 时钟方案差异
+### 6.3 时钟方案差异
 
 | 工程 | MMCM clk_out1 | MMCM clk_out2 | MAC 恢复时钟 | fpga_core 时钟 |
 |---|---|---|---|---|
 | xxvethernet_10g | 100 MHz | 156.25 MHz | tx_clk_out (156.25M) | 156.25 MHz (= MAC 时钟) |
 | xxvethernet_25g | 100 MHz | 390.625 MHz | rx_clk_out (~390M) | 390.625 MHz |
 | ethernet_40g | 100 MHz | 390.625 MHz | tx_clk_out (~312M) | 390.625 MHz |
-| ethernet_100g | 100 MHz | 390.625 MHz | gt_txusrclk2 (~322M) | 390.625 MHz |
 
 - **10G**：逻辑时钟直接使用 MAC 恢复时钟，同频同相，无需跨时钟域 FIFO（`eth_mac_10g_fifo` 仍用于帧缓存）
-- **25G/40G/100G**：逻辑时钟由 MMCM 产生（390.625MHz），与 MAC 恢复时钟异步，`eth_mac_10g_fifo` 或 `ethernet_adapter` 中的异步 FIFO 实现跨时钟域传输
+- **25G/40G**：逻辑时钟由 MMCM 产生（390.625MHz），与 MAC 恢复时钟异步，`eth_mac_10g_fifo` 或 `ethernet_adapter` 中的异步 FIFO 实现跨时钟域传输
 
-### 5.4 物理接口差异
+### 6.4 物理接口差异
 
 | 工程 | 连接器类型 | GT 差分对 | 光模块 |
 |---|---|---|---|
 | xxvethernet_10g | SFP+ | 1 对 TX + 1 对 RX | 10G SFP+ |
 | xxvethernet_25g | SFP+ | 1 对 TX + 1 对 RX | 25G SFP28 |
-| ethernet_40g | QSFP+ | 4 对 TX + 4 对 RX | 40G QSFP+ |
-| ethernet_100g | QSFP+ | 4 对 TX + 4 对 RX | 100G QSFP28 |
+| ethernet_40g | QSFP+ | 4 对 TX + 4 对 RX | 40G QSFP+（需 FMC-QSFP-X2 子卡） |
 
 ---
 
-## 6. 网络配置
+## 7. 网络配置
 
 所有工程的网络参数相同（定义在 `fpga_core.v` 中）：
 
@@ -392,45 +366,68 @@ cmac_usplus (512-bit AXIS) ←→ ethernet_adapter ←→ fpga_core (64-bit 协�
 
 ---
 
-## 7. 目录结构
+## 8. 目录结构
 
 ```
-hellofpga_ku5p/
-├── xxvethernet_10g/        # 10G 以太网工程
-│   ├── IP/                  # Vivado IP TCL 配置脚本
-│   ├── RTL/                 # 用户 RTL 源码
-│   └── tcl/                 # Vivado 工程文件及构建产物
-├── xxvethernet_25g/        # 25G 以太网工程
-│   ├── IP/
-│   ├── RTL/
-│   └── tcl/
-├── ethernet_40g/           # 40G 以太网工程
-│   ├── IP/
-│   ├── RTL/
-│   └── tcl/
-├── ethernet_100g/          # 100G 以太网工程
-│   ├── IP/
-│   ├── RTL/
-│   └── tcl/
-├── clock.xdc               # 时钟约束
-├── qsfp.xdc                # QSFP 引脚约束
-├── qsfp2.xdc               # QSFP2 引脚约束
-├── sfp.xdc                 # SFP 引脚约束
-└── rgmii.xdc               # RGMII 引脚约束
+FPGA_UDP/
+├── doc/                        # 硬件手册与实测报告（详见第 2 节）
+├── rtl/                        # 公共协议栈 RTL（verilog-ethernet）
+├── lib/                        # AXI-Stream 公共库
+├── .gitignore                  # 忽略 tcl/prj/ 等 Vivado 生成产物
+└── example/hellofpga_ku5p/
+    ├── xxvethernet_10g/        # 10G 工程
+    │   ├── IP/                 # Vivado IP 配置 TCL 脚本
+    │   ├── RTL/                # 用户 RTL 源码
+    │   └── tcl/
+    │       ├── build.bat           # 一键恢复工程脚本
+    │       ├── create_project.tcl  # 工程重建脚本
+    │       └── prj/                # 生成的工程（被 .gitignore 忽略）
+    ├── xxvethernet_25g/        # 25G 工程，结构同上
+    ├── ethernet_40g/           # 40G 工程，结构同上
+    ├── clock.xdc  qsfp.xdc  qsfp2.xdc  sfp.xdc  rgmii.xdc   # 时钟/引脚约束
 ```
 
 ---
 
-## 8. 构建与使用
+## 9. 工程恢复与构建
 
-1. 使用 Vivado 2022.2 打开对应工程目录下的 `.xpr` 文件
-2. 运行 `Generate Bitstream` 完成综合、实现和比特流生成
-3. 通过 JTAG 下载 `fpga.bit` 到 FPGA
+**核心约定：Git 仓库只保存重建工程所需的脚本与源码，不保存 Vivado 工程文件与生成产物。** 任何一台装了 Vivado 2022.2 的机器，克隆仓库后运行一个批处理脚本即可自动重建完整 Vivado 工程（含 RTL 源、XDC 约束、IP 核配置）。
+
+### 9.1 一键恢复工程（build.bat）
+
+每个工程的 `example/hellofpga_ku5p/<项目>/tcl/` 下都提供 `build.bat`：
+
+| 工程 | 一键脚本 | 生成的工程名 |
+|---|---|---|
+| 10G | `xxvethernet_10g/tcl/build.bat` | `udp_10g` |
+| 25G | `xxvethernet_25g/tcl/build.bat` | `udp_25g` |
+| 40G | `ethernet_40g/tcl/build.bat` | `udp_40g_loopback` |
+
+**双击运行（或在 cmd 中执行）即可**，脚本会自动：
+
+1. 搜索本机 Vivado 2022.2 安装路径（依次尝试：注册表 `HKLM\SOFTWARE\Xilinx\Vivado\2022.2` → 环境变量 `XILINX_VIVADO` → 常见安装目录 C/D/E/F 及 Program Files）
+2. 在脚本所在目录创建 `prj/` 子目录
+3. 以 batch 模式调用同目录的 `create_project.tcl`，通过 `create_project -dir prj <name>` 将工程生成到 `tcl/prj/<name>/<name>.xpr`
+4. 校验 `.xpr` 是否成功生成并给出 `[OK]` / `[ERROR]` 提示
+
+> 若本机 Vivado 不在标准位置，可编辑 `build.bat` 顶部的 `VIVADO_BAT` 变量手动指定 `vivado.bat` 的完整路径。
+
+### 9.2 目录与版本管理约定
+
+- **纳入 Git**：`tcl/build.bat`、`tcl/create_project.tcl`、`IP/*.tcl`、`RTL/*`、公共 `rtl/`、`lib/`、各 `*.xdc` 约束等脚本与源码
+- **被忽略（不上传）**：由脚本生成的 `tcl/prj/` 目录（`*.xpr`、`*.runs`、`*.gen`、`*.cache`、`*.hw`、`*.ip_user_files`、`*.sim` 等）以及 Vivado 运行临时文件，已在根目录 `.gitignore` 中统一忽略
+- 因此仓库始终干净：只上传"重建工程的脚本"，本地随时可通过 `build.bat` 复原工程
+
+### 9.3 综合、下载与使用
+
+1. 运行对应工程的 `build.bat` 后，用 Vivado 2022.2 打开生成的 `tcl/prj/<name>/<name>.xpr`
+2. 运行 `Generate Bitstream` 完成综合、实现与比特流生成
+3. 通过 JTAG 将 `fpga.bit` 下载到 FPGA
 4. 使用 PC 向 FPGA 的 IP 地址 `192.168.1.128` 的 UDP 端口 `1234` 发送数据
-5. FPGA 会将收到的 UDP 载荷原样回发
+5. FPGA 会将收到的 UDP 载荷原样回发（Loopback）；具体实测方法与结果参见 `doc/test_report_10g.docx`、`doc/test_report_25g.docx`、`doc/test_report_40g.docx`
 
 ---
 
-## 9. 许可
+## 10. 许可
 
-RTL 源码基于 Alex Forencich 的 [verilog-ethernet](https://github.com/alexforenclick/verilog-ethernet) 开源项目（MIT License）。
+RTL 源码基于 Alex Forencich 的 [verilog-ethernet](https://github.com/alexforencich/verilog-ethernet) 开源项目（MIT License）。

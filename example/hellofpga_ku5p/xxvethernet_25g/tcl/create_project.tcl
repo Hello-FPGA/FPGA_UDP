@@ -1,4 +1,4 @@
-create_project -force -part xcku5p-ffvb676-2-i udp_25g
+create_project -force -part xcku5p-ffvb676-2-i -dir prj udp_25g
 
 set obj [get_filesets sources_1]
 set files [list \
